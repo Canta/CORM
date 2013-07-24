@@ -18,6 +18,7 @@ class ORM {
 	
 	const ERROR_SAVE = 1;
 	const ERROR_VALIDACION = 2;
+	const ERROR_PERMISO = 3;
 	
 	public $datos; //Array con datos arbitrarios, desde Fields hasta configuraciones.
 	
@@ -30,6 +31,7 @@ class ORM {
 		$this->datos["fields"] = Array();
 		$this->datos["last_search"] = new Lista();
 		$this->datos["campo_id"] = "id";
+		$this->datos["cache"] = true;
 		
 		if ($tabla != "" && !is_null($tabla)){
 			$this->check_tabla_existe();
@@ -44,11 +46,19 @@ class ORM {
 		return $this->datos["tabla"];
 	}
 	
+	public function cache($val = null){
+		if (is_null($val)){
+			return $this->datos["cache"];
+		} else {
+			$this->datos["cache"] = (bool)$val;
+		}
+	}
+	
 	private function check_tabla_existe(){
 		try{
 			$c = Conexion::get_instance();
 			$qs = "select * from ".$this->get_tabla()." limit 1;";
-			$r  = $c->execute($qs);
+			$r  = $c->execute($qs, $this->cache());
 		} catch(Exception $e){
 			throw new Exception("Error al intentar leer la tabla \"".$this->get_tabla()."\". Revise que la tabla efectivamente exista y los datos de la conexión sean correctos.");
 		}
@@ -65,11 +75,10 @@ class ORM {
 		$c = Conexion::get_instance();
 		
 		$qs = "select * from INFORMATION_SCHEMA.COLUMNS where table_name = '".$this->get_tabla()."' and (table_schema='".$c->get_database_name()."' or table_catalog='".$c->get_database_name()."')";
-		$r  = $c->execute($qs);
+		$r  = $c->execute($qs, $this->cache());
 		$r  = (is_null($r)) ? Array() : $r;
 		
 		$this->datos["campos"] = $r;
-		
 		
 		//AGREGADO:
 		//Carga también las keys de la tabla.
@@ -120,7 +129,7 @@ class ORM {
 				
 				$c  = Conexion::get_instance();
 				$qs = "select * from ".$referencia_tabla." order by ".$referencia_campo." asc;";
-				$r  = $c->execute($qs);
+				$r  = $c->execute($qs, $this->cache());
 				
 				$ret = $r;
 				break;
@@ -178,7 +187,7 @@ class ORM {
 		
 		$c  = Conexion::get_instance();
 		$qs = "select * from ".$this->get_tabla()." where ".$w." limit 1;";
-		$r  = $c->execute($qs);
+		$r  = $c->execute($qs, $this->cache());
 		
 		if (is_null($r) || count($r) == 0){
 			$r = $this->get_empty_fields();
@@ -245,24 +254,42 @@ class ORM {
 				
 				$largo = (isset($campo["CHARACTER_MAXIMUM_LENGTH"]) && (int)$campo["CHARACTER_MAXIMUM_LENGTH"] > 0) ? (int)$campo["CHARACTER_MAXIMUM_LENGTH"] : 0;
 				$largo = ($largo <= 0 && isset($campo["character_maximum_length"]) ) ? (int)$campo["character_maximum_length"] : $largo;
+				if ($largo == 0 || $largo == '' || is_null($largo)){
+					//Chequeo si no existe también NUMERIC_PRECISION
+					$largo = (isset($campo["NUMERIC_PRECISION"]) && (int)$campo["NUMERIC_PRECISION"] > 0) ? (int)$campo["NUMERIC_PRECISION"] : 0;
+				}
+				
+				$comentario = (isset($campo["COLUMN_COMMENT"])) ? $campo["COLUMN_COMMENT"] : $campo["column_comment"];
+				$default = (isset($campo["COLUMN_DEFAULT"])) ? $campo["COLUMN_DEFAULT"] : null;
 				
 				$tipoSQL = (isset($campo["data_type"])) ? $campo["data_type"] : $campo["DATA_TYPE"];;
 				$tipoHTML = Field::sqltype2htmltype($tipoSQL);
 				
 				if (strpos(strtolower($tipoSQL),"timestamp") !== false){
 					$ret[$nombre] = new TimestampField();
+					$default = 'now()';
+				}else if (strpos(strtolower($tipoSQL),"bit") !== false){
+					$ret[$nombre] = new BitField();
 				} else {
 					$ret[$nombre] = new Field();
 				}
-				$ret[$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
+				//$ret[$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
+				$ret[$nombre]->set_id($nombre); 
 				//$ret[$nombre]->set_valor($this->datos[$i][$tmp[$x]]);
 				$ret[$nombre]->set_tipo_HTML($tipoHTML);
 				$ret[$nombre]->set_tipo_sql($tipoSQL);
 				$ret[$nombre]->set_largo( $largo );
+				$ret[$nombre]->set_rotulo( $comentario );
+				$ret[$nombre]->set_valorDefault( $default );
 				
 				//$ret[$name]->set_requerido( pg_field_is_null($this->consulta, $x) );
 				//$ret[$name]->set_primary_key( (strpos($flags, "primary_key") > -1) );
 				//$ret[$name]->set_activado( !((boolean)strpos($flags, "auto_increment")) );
+				
+				$fk_vals = $this->get_campo_fk_values($nombre);
+				if (count($fk_vals) > 0){
+					$ret[$nombre] = new SelectField($ret[$nombre]->get_id(), $ret[$nombre]->get_rotulo(), $ret[$nombre]->get_valor(), $fk_vals);
+				}
 				
 			}
 			return $ret;
@@ -281,9 +308,12 @@ class ORM {
 			
 			$tipoSQL = (isset($campo["data_type"])) ? $campo["data_type"] : $campo["DATA_TYPE"];;
 			
+			$comentario = (isset($campo["COLUMN_COMMENT"])) ? $campo["COLUMN_COMMENT"] : $campo["column_comment"];
+			
 			if (isset($this->datos["fields"][$nombre])){
 				$this->datos["fields"][$nombre]->set_tipo_sql($tipoSQL);
 				$this->datos["fields"][$nombre]->set_largo( $largo );
+				$this->datos["fields"][$nombre]->set_rotulo( $comentario );
 			}
 		}
 	}
@@ -320,6 +350,12 @@ class ORM {
 				//echo("Campo:".$nombre."<br/>");
 				$largo = (isset($campo["CHARACTER_MAXIMUM_LENGTH"]) && (int)$campo["CHARACTER_MAXIMUM_LENGTH"] > 0) ? (int)$campo["CHARACTER_MAXIMUM_LENGTH"] : 0;
 				$largo = ($largo <= 0 && isset($campo["character_maximum_length"])) ? (int)$campo["character_maximum_length"] : $largo;
+				if ($largo == 0 || $largo == '' || is_null($largo)){
+					//Chequeo si no existe también NUMERIC_PRECISION
+					$largo = (isset($campo["NUMERIC_PRECISION"]) && (int)$campo["NUMERIC_PRECISION"] > 0) ? (int)$campo["NUMERIC_PRECISION"] : 0;
+				}
+				
+				$comentario = (isset($campo["COLUMN_COMMENT"])) ? $campo["COLUMN_COMMENT"] : $campo["column_comment"];
 				
 				$tipoSQL = (isset($campo["data_type"])) ? $campo["data_type"] : $campo["DATA_TYPE"];
 				$tipoHTML = Field::sqltype2htmltype($tipoSQL);
@@ -347,24 +383,33 @@ class ORM {
 				}
 				
 				//echo($nombre.":".$tipoSQL."<br/>");
-				if (strpos(strtolower($tipoSQL),"timestamp") !== false){
+				if (strpos(strtolower($tipoSQL),"timestamp") !== false) {
 					$ret[$i][$nombre] = new TimestampField();
+				} if (strtolower($tipoSQL) == "bit") {
+					$ret[$i][$nombre] = new BitField();
 				} else {
 					$ret[$i][$nombre] = new Field();
 				}
-				$ret[$i][$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
-				$ret[$i][$nombre]->set_valor($valor);
+				//$ret[$i][$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
+				$ret[$i][$nombre]->set_id($nombre);
+				$ret[$i][$nombre]->set_largo($largo);
 				$ret[$i][$nombre]->set_tipo_HTML($tipoHTML);
 				$ret[$i][$nombre]->set_tipo_sql($tipoSQL);
-				$ret[$i][$nombre]->set_largo($largo);
-				
+				$ret[$i][$nombre]->set_rotulo($comentario);
 				$ret[$i][$nombre]->set_requerido( (trim($nullable) === "NO") );
+				$ret[$i][$nombre]->set_valor($valor);
+				
 				//echo(var_dump($pkey)); echo("<br>");
 				$ret[$i][$nombre]->set_primary_key( $pkey );
 				//$ret[$i][$nombre]->set_activado( !((boolean)strpos($flags, "auto_increment")) );
 				if (!$pkey){
 					$ret[$i][$nombre]->set_valorDefault( $default );
 					//echo("default: "); echo(var_dump($default)); echo("<br/>");
+				}
+				
+				$fk_vals = $this->get_campo_fk_values($nombre);
+				if (count($fk_vals) > 0){
+					$ret[$i][$nombre] = new SelectField($ret[$i][$nombre]->get_id(), $ret[$i][$nombre]->get_rotulo(), $ret[$i][$nombre]->get_valor(), $fk_vals);
 				}
 				
 			}
@@ -385,7 +430,8 @@ class ABM extends ORM{
 		$this->datos["form_columnas"] = 2;
 		$this->datos["form_extra_code_arriba"] = Array();
 		$this->datos["form_extra_code_abajo"] = Array();
-		$this->datos["form_titulo"] = "ABM - ". ucfirst(strtolower($tabla));;
+		$this->datos["form_titulo"] = "ABM - ". ucfirst(strtolower($tabla));
+		$this->datos["form_descripcion"] = "";
 		$this->datos["form_operacion"] = "lista";
 		$this->datos["form_operacion_default"] = "lista";
 		$this->datos["metodo_serializacion"] = "html";
@@ -399,7 +445,7 @@ class ABM extends ORM{
 		
 		//Botones por defecto para el formulario.
 		//$boton_ok	  = new FormButton("btnGuardar", "", " Guardar datos ", "submit");
-		$boton_cancel = new FormButton("btnCancel", "", " Cancelar ", "button", Array("onclick" => "javascript:location.href='./';"));
+		$boton_cancel = new FormButton("btnCancel", "", " Cancelar ", "button", Array("onclick" => "accion_cancelar();"));
 		$this->set_form_buttons(Array($boton_cancel));
 		
 		$this->setup_fields();
@@ -499,13 +545,13 @@ class ABM extends ORM{
 			//die(var_dump($qs));
 			//Una vez con la query construida, la ejecuto.
 			$c = Conexion::get_instance();
-			$ret = $c->execute($qs);
+			$ret = $c->execute($qs,false);
 			
 			if ($es_insert){
 				//necesito obtener el último ID insertado
 				$qs = "select ".$pkey["COLUMN_NAME"]." from ".$this->datos["tabla"]." order by ".$pkey["COLUMN_NAME"]." desc limit 1;";
 				$c = Conexion::get_instance();
-				$ret2 = $c->execute($qs);
+				$ret2 = $c->execute($qs,false);
 				foreach ($ffs as $key=>$ff){
 					if (strtolower($key) == strtolower($pkey["COLUMN_NAME"])){
 						$tmp_valor = isset($ret2[0][strtoupper($key)]) ? $ret2[0][strtoupper($key)] : $ret2[0][strtolower($key)];
@@ -531,6 +577,13 @@ class ABM extends ORM{
 	//Acepta un array de IDs como parámetro, de modo de poder dar de baja muchos registros.
 	public function baja($id, $logica = true, $data = null){
 		$data = (is_array($data)) ? $data : Array();
+		
+		//Chequeo permisos.
+		if (!isset($_SESSION["user"]) || !$_SESSION["user"]->puede($this->get_tabla(),"DELETE")){
+			$msg = new MensajeOperacion("El usuario no cuenta con permiso para borrar registros en esta tabla.", ABM::ERROR_PERMISO);
+			$this->add_mensaje($msg);
+			return;
+		}
 		
 		if ($logica === true){
 			//Baja lógica
@@ -559,16 +612,16 @@ class ABM extends ORM{
 			//Baja concreta
 			if (is_array($id)){
 				foreach ($id as $valor) {
-					$q		= new Query();
+					$c		= Conexion::get_instance();
 					$qs		= "delete from " . $this->get_tabla() . " where " . $this->get_campo_id() . " = " . $valor . ";";
-					$ret 	= $q->executeQuery($qs);
+					$ret 	= $c->execute($qs);
 				}
 				$msg = new MensajeOperacion("[".date('Y-m-j h:i:s')."]: Se eliminaron ".count($id)." registros de la base de datos.");
 				$this->add_mensaje($msg);
 			} else {
-				$q		= new Query();
+				$c		= Conexion::get_instance();
 				$qs		= "delete from " . $this->get_tabla() . " where " . $this->get_campo_id() . " = " . $id . ";";
-				$ret 	= $q->executeQuery($qs);
+				$ret 	= $c->execute($qs);
 				$msg = new MensajeOperacion("[".date('Y-m-j h:i:s')."]: Se eliminó de la base de datos el registro #".$id.".");
 				$this->add_mensaje($msg);
 			}
@@ -725,23 +778,30 @@ class ABM extends ORM{
 		return true;
 	}
 	
-	
 	public function get_rotulos_from_field_names($fns){
 		//$fns se supone que sea un Array con nombres de campos.
 		if (is_array($fns)){
 			$fs = $this->get_fields();
+			/*
 			for ($i =0; $i < count($fns); $i++){
-				if (isset($fs[strtoupper($fns[$i])]) && $fs[strtoupper($fns[$i])]->get_rotulo() != "" ){
-					$fns[$i] = $fs[strtoupper($fns[$i])]->get_rotulo();
+				if (is_string($fns[$i]) && isset($fs[strtoupper($fns[$i])]) && $fs[strtoupper($fns[$i])]->get_rotulo() != "" ){
+						$fns[$i] = $fs[strtoupper($fns[$i])]->get_rotulo();
+				}
+			}
+			*/
+			
+			foreach ($fns as $k=>$v){
+				if (is_string($v) && isset($fs[strtoupper($v)]) && $fs[strtoupper($v)]->get_rotulo() != "" ){
+						$fns[$k] = $fs[strtoupper($v)]->get_rotulo();
 				}
 			}
 			
 			return $fns;
 		} else {
-			throw new Exception("<b class=\"exception_text\">Clase ORM, método get_rotulos_from_field_names(): se esperaba un array.</b>\n");
+			throw new Exception("<b class=\"exception_text\">Clase ORM, método get_rotulos_from_field_names(): se esperaba un array.</b>b>\n");
 		}
 	}
-	
+
 	
 	public function load_fields_from_array($arr){
 		//Dado un array, típicamente $_REQUEST, carga valores en los fields.
@@ -813,7 +873,7 @@ class ABM extends ORM{
 	public function render_form($data = null){
 		$metodo = (!is_null($data) && isset($data["metodo_serializacion"]) ) ? $data["metodo_serializacion"] : $this->get_metodo_serializacion();
 		$ret = null;
-		
+		$this->setup_fields();
 		switch ($metodo){
 			case "html":
 				$ret = $this->render_form_html($data);
@@ -835,6 +895,7 @@ class ABM extends ORM{
 		$this->datos["form_extra_code_arriba"] = (isset($this->datos["form_extra_code_arriba"])) ? $this->datos["form_extra_code_arriba"] : Array();
 		$this->datos["form_extra_code_abajo"] = (isset($this->datos["form_extra_code_abajo"])) ? $this->datos["form_extra_code_abajo"] : Array();
 		$this->datos["form_titulo"] = (isset($this->datos["form_titulo"])) ? $this->datos["form_titulo"] : "";
+		$this->datos["form_descripcion"] = (isset($this->datos["form_descripcion"])) ? $this->datos["form_descripcion"] : "";
 		
 		$solo_con_rotulo = (!is_null($data) && isset($data["solo_con_rotulo"]) ) ? $data["solo_con_rotulo"] : True;
 		
@@ -842,6 +903,7 @@ class ABM extends ORM{
 		
 		$form .= "<input type=\"hidden\" name=\"form_operacion\" value=\"".$this->get_operacion()."\" />\n";
 		$form .= "<div class=\"FormTitulo\">".$this->datos["form_titulo"]."</div>\n";
+		$form .= "<div class=\"FormDescripcion\">".$this->datos["form_descripcion"]."</div>\n";
 		
 		foreach ($this->get_mensajes() as $m){
 			$form .= $m->render()." &nbsp; ";
@@ -890,7 +952,7 @@ class ABM extends ORM{
 		foreach ($this->get_form_buttons() as $fb){
 			$form .= $fb->render()." &nbsp; ";
 		}
-		$form .= "</div>\n";
+		$form .= "</form>\n";
 		
 		return $form;
 	}
@@ -1010,6 +1072,11 @@ class ABM extends ORM{
 			//echo("<br/>analizar_operacion: 5<br/>");
 			$this->baja($id, true, $data);
 			$op = "lista";
+		} else if($op == "baja"){
+			//Baja física de uno o muchos items
+			//echo("<br/>analizar_operacion: 5<br/>");
+			$this->baja($id, false, $data);
+			$op = "lista";
 		} else if(isset($data['boton_activar']) && ($op == "alta")){
 			//reactivación de uno o muchos items
 			//echo("<br/>analizar_operacion: 6<br/>");
@@ -1066,7 +1133,7 @@ class ABM extends ORM{
 	//Dado un array de criterios, busca items en la tabla del ABM.
 	//Opcionalmente se puede ingresar un array con los campos de resultado.
 	//Caso contrario, muestra todos los campos de la tabla
-	public function search($criterios, $campos = null, $campo_id = null, $paginado=null){
+	public function search($criterios, $campos = null, $campo_id = null, $paginado=null, $order_by = null){
 		if (!is_array($criterios)){
 			throw new Exception("Clase ABM, método search(): se esperaba un array de criterios.<br/>\n");
 		}
@@ -1074,6 +1141,7 @@ class ABM extends ORM{
 		//Validaciones y seteos por defecto.
 		$campos   = is_array($campos) ? $campos : Array();
 		$campo_id = is_null($campo_id) ? $this->datos["campo_id"] : $campo_id;
+		$order_by = is_null($order_by) ? $this->datos["campo_id"] : $order_by;
 		//Me aseguro de que siempre esté el ID en la lista de campos
 		if (!in_array($campo_id, $campos)){
 			array_unshift($campos, $campo_id);
@@ -1093,7 +1161,7 @@ class ABM extends ORM{
 				$fs[] = $item;
 			}
 		}
-		
+		//die(var_dump($fs));
 		$fs = implode(",", $fs);
 		if ($fs == $campo_id . "," || $fs == $campo_id ){
 			$fs = " * ";
@@ -1108,12 +1176,14 @@ class ABM extends ORM{
 				$qs .= "AND (".$c.") ";
 			}
 		}
+		$qs .= "ORDER BY ".$order_by." ";
+		
 		//die(var_dump($qs));
 		$c = Conexion::get_instance();
 		$row = null;
 		$items = null;
 		if (is_null($paginado)){
-			$r = $c->execute($qs);
+			$r = $c->execute($qs,false);
 			$r = (is_null($r) || $r === false) ? Array(Array()) : $r;
 			$row = (count($r) > 0) ? $r[0] : Array();
 			$items = $r;
@@ -1144,6 +1214,7 @@ class ABM extends ORM{
 		$lista_parms = Array(
 			"campos"=>$campos, 
 			"items"=>$items, 
+			"tabla"=>$this->get_tabla(),
 			"paginado" => (is_null($paginado)) ? false : true,
 			"pagina_actual" => (is_null($paginado)) ? null : $r["metadata"]["pagina_actual"],
 			"max_pages" => (is_null($paginado)) ? null : $r["metadata"]["max_pages"],
@@ -1246,10 +1317,10 @@ class Model extends ORM{
 			}
 		}
 		
-		//echo(var_dump($qs));
+		//die(var_dump($qs));
 		
 		$c = Conexion::get_instance();
-		$r = $c->execute($qs);
+		$r = $c->execute($qs, $this->cache());
 		$r = (is_null($r) || $r === false) ? Array(Array()) : $r;
 		
 		$ret = Array();
@@ -1257,7 +1328,12 @@ class Model extends ORM{
 		foreach ($r as $item){
 			$tmp_class = get_class($this);
 			
-			$ret[] = new $tmp_class($item[$this->get_campo_id()]);
+			if ($tmp_class == "Model"){
+				$ret[] = new $tmp_class($this->get_tabla());
+				$ret[count($ret)-1]->load($item[$this->get_campo_id()]);
+			} else{
+				$ret[] = new $tmp_class($item[$this->get_campo_id()]);
+			}
 		}
 		
 		return $ret;
@@ -1291,5 +1367,17 @@ class Model extends ORM{
 	}
 	
 }
+
+
+try{
+	/* Incluyo TODAS las clases de ABM que existan declaradas */
+	
+	foreach (glob(dirname(__FILE__)."/abmclasses/*.class.php") as $filename){
+		require_once($filename);
+	}
+} catch(Exception $e){
+	//nada 
+}
+
 
 ?>
