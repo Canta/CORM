@@ -775,7 +775,25 @@ class ABM extends ORM{
 	//Loopea por todos los fields y chequea los datos que contienen con diferentes criterios.
 	//Devuelve true o false.
 	public function validate(){
-		return true;
+		$fs = $this->get_fields();
+		$ret = true;
+		
+		$id = strtoupper($this->get_campo_id());
+		$new = $this->is_new_item();
+		
+		foreach ($fs as $nombre => $f){
+			
+			if (!($new && $id == strtoupper($nombre))){
+				if (!$f->validate()){
+					$ret = false;
+					$rot = $f->get_rotulo();
+					$f->add_clase_CSS("erroneo");
+					$msg = new MensajeOperacion("El valor del campo ".(($rot == "") ? $nombre : $rot)." es inválido. ",ABM::ERROR_VALIDACION);
+					$this->add_mensaje($msg);
+				}
+			}
+		}
+		return $ret;
 	}
 	
 	public function get_rotulos_from_field_names($fns){
@@ -1024,7 +1042,17 @@ class ABM extends ORM{
 			//echo("<br/>analizar_operacion: 1<br/>");
 			$this->load_fields_from_array($data);
 			$this->save();
-			$op = "modificacion";
+			
+			$tmpok = true;
+			$msgs = $this->get_mensajes();
+			foreach ($msgs as $msg){
+				if ($msg->isError()){
+					$tmpok = false;
+					break;
+				}
+			}
+			
+			$op = ($tmpok) ? "modificacion" : $op;
 		} else if(isset($data['boton_nuevo_item']) && ($op == "alta")){
 			//Nuevo item
 			//Muestra el formulario de modificación, pero vacío.

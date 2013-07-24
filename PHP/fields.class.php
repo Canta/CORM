@@ -26,6 +26,8 @@ class Field {
 		$this->data["largo"] = 0;
 		$this->data["primaryKey"] = false;
 		$this->data["columnas"] = 0;
+		$this->data["clase_css"] = "Field";
+		
 		//$this->data["valor_default"] = null; //FIX: no lo seteo.
 		
 		if (trim($tipoHTML) == ""){
@@ -199,6 +201,36 @@ class Field {
 		return $this->data["regexValidacion"];
 	}
 	
+	public function validate(){
+		
+		$va = $this->get_valor();
+		
+		if ($this->get_requerido() === true && ($va === "" || is_null($va))){
+			//echo($this->get_HTML_name() . " es requerido y el valor es \"".$va."\"<br/>");
+			return false;
+		}
+		
+		
+		$ret = false;
+		
+		$rx = $this->get_regex_validacion();
+		$ma = preg_match("/".$rx."/",$va);
+		
+		if ($ma === false){
+			throw new Exception("<b class=\"exception_text\">Clase Field, método validate: hubo un error al intentar validad la expresión regular \"".$rx."\" contra el valor \"".$va."\". Imposible continuar.</b>");
+		} else if ($ma > 0) {
+			//echo($this->get_HTML_name() . " validó \"".$va."\"<br/>");
+			$ret = true;
+		} else {
+			$ret = (boolean)$this->get_requerido();
+			//echo($this->get_HTML_name() . " no era obligatorio y su valor es \"".$va."\". Entonces, devuelvo \"".(($ret) ? "verdadero" : "falso")."\".<br/>");
+		}
+		
+		//die(var_dump($ret));
+		
+		return $ret;
+	}
+	
 	public function set_id($valor){
 		$this->data["id"] = $valor;
 	}
@@ -253,8 +285,8 @@ class Field {
 		$this->data["regexValidacion"] = $valor;
 	}
 	
-	public function set_clase_CSS(){
-		$return = "Field";
+	public function get_clase_CSS(){
+		$return = $this->data["clase_css"];
 		
 		if ($this->get_tipo_HTML() == "enum"){
 			$return .= " enum";
@@ -262,6 +294,12 @@ class Field {
 		
 		return $return;
 	}
+	
+	public function add_clase_CSS($val){
+		$this->data["clase_css"] = $this->data["clase_css"] . " " . $val;
+	}
+	
+	
 	
 	//20120522 - Daniel Cantarín
 	//De acuerdo a problemas de implementación en múltiples motores de bases de datos,
@@ -304,7 +342,7 @@ class Field {
 				$type = ($this->get_primary_key() === true) ? "hidden" : $this->get_tipo_HTML() ;
 				$type = ($type=="select") ? "hidden" : $type;
 				$type = str_replace("enum","text",$type);
-				$clase_css = $this->set_clase_CSS();
+				$clase_css = $this->get_clase_CSS();
 				
 				$ret2 .= "<input class='".$clase_css."' id='".$this->get_id()."' name='".$this->get_HTML_name()."' type='".$type."' value='".$valores[$v]."' pattern='".$this->get_regex_validacion($autoregex)."' alt='".str_replace("'","`",$this->get_rotulo())."' ";
 				
@@ -750,7 +788,7 @@ class SelectField extends Field {
 			$type = ($this->get_primary_key() === true) ? "hidden" : $this->get_tipo_HTML() ;
 			$type = ($type=="select") ? "hidden" : $type;
 			$type = str_replace("enum","text",$type);
-			$clase_css = $this->set_clase_CSS();
+			$clase_css = $this->get_clase_CSS();
 			
 			$ret2 .= "<input class='".$clase_css."' id='".$this->get_id()."' name='".$this->get_HTML_name()."' type='".$type."' value='".$valores[$v]."' pattern='".$this->get_regex_validacion($autoregex)."' alt='".str_replace("'","`",$this->get_rotulo())."' ";
 			
@@ -948,7 +986,7 @@ class OptionalListField extends SelectField{
 		$type = ($this->get_primary_key() === true) ? "hidden" : $this->get_tipo_HTML() ;
 		$type = ($type != "hidden") ? "text" : $type;
 		$type = str_replace("enum","text",$type);
-		$clase_css = $this->set_clase_CSS();
+		$clase_css = $this->get_clase_CSS();
 		$disabled = "";
 		
 		$ret2 .= "<input separador=\"".$this->get_separador()."\"  class='".$clase_css."' id='".$this->get_id()."' name='".$this->get_HTML_name()."' type='".$type."' value='".$valor."' old_value='".$valor."' pattern='".$this->get_regex_validacion($autoregex)."' alt='".str_replace("'","`",$this->get_rotulo())."' ";
@@ -1029,7 +1067,7 @@ class FileField extends Field{
 		$type = ($this->get_primary_key() === true) ? "hidden" : $this->get_tipo_HTML() ;
 		$type = ($type != "hidden") ? "text" : $type;
 		$type = str_replace("enum","text",$type);
-		$clase_css = $this->set_clase_CSS();
+		$clase_css = $this->get_clase_CSS();
 		
 		$ret2 .= "<input class='".$clase_css."' type='file' name='file_".$this->get_id()."' id='file_".$this->get_id()."' ";
 		if ($this->get_requerido() === TRUE){
@@ -1073,7 +1111,7 @@ class ImageFileField extends FileField{
 	public function render(){
 		$ret  = str_replace("</span>\n", "", parent::render());
 		
-		$ret .= "\n<br/>\n<img src='".$this->get_valor()."' class='".$this->set_clase_CSS()."' id='image_".$this->get_id()."' onclick=\"$('#file_".$this->get_id()."')[0].click();\" />\n<br/>\n";
+		$ret .= "\n<br/>\n<img src='".$this->get_valor()."' class='".$this->get_clase_CSS()."' id='image_".$this->get_id()."' onclick=\"$('#file_".$this->get_id()."')[0].click();\" />\n<br/>\n";
 		
 		$ret .= "</span>\n";
 		return $ret;
