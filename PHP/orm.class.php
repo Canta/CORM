@@ -262,17 +262,24 @@ class ORM {
 				$comentario = (isset($campo["COLUMN_COMMENT"])) ? $campo["COLUMN_COMMENT"] : $campo["column_comment"];
 				$default = (isset($campo["COLUMN_DEFAULT"])) ? $campo["COLUMN_DEFAULT"] : null;
 				
+				$nullable = (isset($campo["IS_NULLABLE"])) ? $campo["IS_NULLABLE"] : $campo["is_nullable"];
+				
 				$tipoSQL = (isset($campo["data_type"])) ? $campo["data_type"] : $campo["DATA_TYPE"];;
 				$tipoHTML = Field::sqltype2htmltype($tipoSQL);
+				$fk_vals = $this->get_campo_fk_values($nombre);
 				
 				if (strpos(strtolower($tipoSQL),"timestamp") !== false){
 					$ret[$nombre] = new TimestampField();
 					$default = 'now()';
 				}else if (strpos(strtolower($tipoSQL),"bit") !== false){
 					$ret[$nombre] = new BitField();
+				} else if (count($fk_vals) > 0) {
+					$ret[$nombre] = new SelectField($nombre, $comentario, "", $fk_vals);
+					$tipoHTML = "select";
 				} else {
 					$ret[$nombre] = new Field();
 				}
+				
 				//$ret[$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
 				$ret[$nombre]->set_id($nombre); 
 				//$ret[$nombre]->set_valor($this->datos[$i][$tmp[$x]]);
@@ -280,17 +287,17 @@ class ORM {
 				$ret[$nombre]->set_tipo_sql($tipoSQL);
 				$ret[$nombre]->set_largo( $largo );
 				$ret[$nombre]->set_rotulo( $comentario );
+				$ret[$nombre]->set_requerido( (trim($nullable) === "NO") );
 				$ret[$nombre]->set_valorDefault( $default );
 				
 				//$ret[$name]->set_requerido( pg_field_is_null($this->consulta, $x) );
 				//$ret[$name]->set_primary_key( (strpos($flags, "primary_key") > -1) );
 				//$ret[$name]->set_activado( !((boolean)strpos($flags, "auto_increment")) );
-				
-				$fk_vals = $this->get_campo_fk_values($nombre);
-				if (count($fk_vals) > 0){
-					$ret[$nombre] = new SelectField($ret[$nombre]->get_id(), $ret[$nombre]->get_rotulo(), $ret[$nombre]->get_valor(), $fk_vals);
+				/*
+				if ($ret[$nombre] instanceof SelectField){
+					die(var_dump($ret[$nombre]->get_requerido()));
 				}
-				
+				*/
 			}
 			return $ret;
 		}
@@ -383,14 +390,19 @@ class ORM {
 				}
 				
 				//echo($nombre.":".$tipoSQL."<br/>");
+				$fk_vals = $this->get_campo_fk_values($nombre);
 				if (strpos(strtolower($tipoSQL),"timestamp") !== false) {
 					$ret[$i][$nombre] = new TimestampField();
-				} if (strtolower($tipoSQL) == "bit") {
+				} else if (strtolower($tipoSQL) == "bit") {
 					$ret[$i][$nombre] = new BitField();
+				} else if (count($fk_vals) > 0){
+					$ret[$i][$nombre] = new SelectField($nombre, $comentario, $valor, $fk_vals);
+					$tipoHTML = "select";
 				} else {
 					$ret[$i][$nombre] = new Field();
 				}
 				//$ret[$i][$nombre]->set_id($tipoHTML.$nombre); //por ejemplo: textLEGAJO, checkboxACTIVO, etc.
+				
 				$ret[$i][$nombre]->set_id($nombre);
 				$ret[$i][$nombre]->set_largo($largo);
 				$ret[$i][$nombre]->set_tipo_HTML($tipoHTML);
@@ -405,11 +417,6 @@ class ORM {
 				if (!$pkey){
 					$ret[$i][$nombre]->set_valorDefault( $default );
 					//echo("default: "); echo(var_dump($default)); echo("<br/>");
-				}
-				
-				$fk_vals = $this->get_campo_fk_values($nombre);
-				if (count($fk_vals) > 0){
-					$ret[$i][$nombre] = new SelectField($ret[$i][$nombre]->get_id(), $ret[$i][$nombre]->get_rotulo(), $ret[$i][$nombre]->get_valor(), $fk_vals);
 				}
 				
 			}
@@ -942,12 +949,6 @@ class ABM extends ORM{
 			$i = 0;
 			foreach ($this->get_fields() as $k=>$ff){
 				if (($solo_con_rotulo != true) || ($ff->get_rotulo() != "" && $solo_con_rotulo == true) || $ff->get_primary_key() === true){
-					
-					//Si el campo tiene aplicado un Foreign Key, lo convierto Field de tipo Enum
-					$fk_vals = $this->get_campo_fk_values($k);
-					if (count($fk_vals) > 0){
-						$ff = new SelectField($ff->get_id(), $ff->get_rotulo(), $ff->get_valor(), $fk_vals);
-					}
 					
 					if ($i % $cols == 0) {
 						$form .= "<div class=\"Field_Row\" >\n";

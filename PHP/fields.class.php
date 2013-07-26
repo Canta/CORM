@@ -75,6 +75,17 @@ class Field {
 		return $this->data["rotulo"];
 	}
 	
+	
+	public function is_number(){
+		$ret = false;
+		
+		$arr  = Array("int","int2","int4","int8","numeric","real","float","timestamp","timestamptz","integer","timestamp without time zone","smallint","bit");
+		$tipo = $this->get_tipo_sql();
+		$ret = (array_search($tipo,$arr) !== false);
+		
+		return $ret;
+	}
+	
 	public function get_valor($corregir = true){
 		
 		//20111006 - agrego la posibilidad de corregir los datos.
@@ -151,6 +162,8 @@ class Field {
 			//Idem con el valor NULL
 		} else if (strtolower($tipo) == "bit"){
 			//Idem campos BIT
+		} else if ($this instanceof PasswordField){
+			//Idem PasswordFields
 		} else {
 			//Para cualquier otro caso, el valor va entre comillas.
 			$ret = "'".mysql_real_escape_string($ret)."'";
@@ -622,9 +635,25 @@ class TimestampField extends Field{
 		return "";
 	}
 	
+	public function validate(){
+		return true;
+	}
+	
+	public function get_valor($corregir = true){
+		$ret = parent::get_valor($corregir);
+		
+		die(var_dump(is_numeric($ret)));
+		if ($corregir === true && !is_numeric($ret)){
+			$ret = strtotime($ret);
+		}
+		
+		return $ret;
+	}
+	
 	public function get_valor_para_sql(){
-		$ret = parent::get_valor_para_sql();
-		$ret = ($ret == '0' || $ret == '' || strtoupper($ret) == 'CURRENT_TIMESTAMP' || $ret == "''") ? "now()" : $ret;
+		//$ret = parent::get_valor_para_sql();
+		//$ret = ($ret == '0' || $ret == '' || strtoupper($ret) == 'CURRENT_TIMESTAMP' || $ret == "''") ? "now()" : $ret;
+		$ret = "now()";
 		return $ret;
 	}
 	
@@ -673,6 +702,73 @@ class BitField extends Field{
 	
 }
 
+//20130725 - Daniel Cantarín 
+//Agrego un tipo de Field especial para gestión de passwords
+class PasswordField extends Field{
+	public function __construct($id="", $rotulo="", $valor="", $tipoHTML=""){
+		parent::__construct($id, $rotulo, $valor, $tipoHTML);
+		$this->set_algorithm("md5");
+		$this->set_tipo_HTML("password");
+	}
+	
+	public function set_algorithm($val){
+		$val == strtolower($val);
+		if ($val == "md5"){
+			$this->set_largo(32);
+		} else if ("sha1"){
+			$this->set_largo(40);
+		} else {
+			throw new Exception("Class PasswordField, method set_algorithm: '".$val."' is not a valid password encryption algorithm.");
+		}
+		
+		$this->data["algorithm"] = $val;
+	}
+	
+	public function get_algorithm(){
+		return $this->data["algorithm"];
+	}
+	
+	public function set_valor($valor){
+		$tmp = $valor;
+		
+		parent::set_valor($tmp);
+	}
+	
+	public function encrypt($val){
+		$ret = "";
+		$alg = $this->get_algorithm();
+		if ($alg == "md5"){
+			$ret = md5($val);
+		} else if ($alg == "sha1") {
+			$ret = sha1($val);
+		} 
+		
+		return $ret;
+	}
+	
+	public function get_valor($corregir = true){
+		$ret = parent::get_valor($corregir);
+		if ($corregir){
+			if (strlen($ret) < $this->get_largo() && $ret != ""){
+				$ret = $this->encrypt($ret);
+			}
+		}
+		return $ret;
+	}
+	
+	
+	public function get_valor_para_sql(){
+		$ret = parent::get_valor_para_sql();
+		$largo = $this->get_largo();
+		if (strlen($ret) < $this->get_largo() && $ret != ""){
+			$ret = $this->encrypt($ret);
+		}
+		
+		return "'".$ret."'";
+	}
+	
+}
+
 class SelectField extends Field {
 	
 	public function __construct($id="", $rotulo="", $valor="", $items = null){
@@ -687,6 +783,7 @@ class SelectField extends Field {
 		$this->data["campo_indice"] = 0;
 		$this->data["campo_descriptivo"] = 1;
 	}
+	
 	
 	public function set_campo_indice($val){
 		$this->data["campo_indice"] = $val;
@@ -726,9 +823,25 @@ class SelectField extends Field {
 		return $ret;
 	}
 	
-	public function get_valor($corregir = true){
+	public function get_valor_para_sql(){
+		$ret = parent::get_valor_para_sql();
+		$items = $this->get_items();
+		$found = false;
+		foreach ($items as $nombre=>$valor){
+			if ("'".strtolower($valor[$this->get_campo_indice()])."'" == strtolower($ret)){
+				$found = true;
+				break;
+			}
+		}
 		
-		//$v = parent::getValor($corregir);
+		if ($found !== true){
+			$ret = ($this->get_requerido()) ? $items[0][$this->get_campo_indice()] : 'null';
+		}
+		
+		return $ret;
+	}
+	
+	public function get_valor($corregir = true){
 		
 		//20121025 - Daniel Cantarín 
 		//Pequeño fix: cuando el campo es int, que el valor por defecto sea cero, no un string vacío.
@@ -736,9 +849,9 @@ class SelectField extends Field {
 		//y al estar guardado en la base como "0" y corregir el valor en parent::get_valor(), ese
 		//"0" que era válido se convierte en un "" inválido.
 		$tipo = strtolower($this->get_tipo_sql());
-		if (strpos($tipo,"int") !== false ){
+		if ($this->is_number()){
 			$corregir = false;
-		} 
+		}
 		
 		$v = parent::get_valor($corregir);
 		
@@ -750,6 +863,7 @@ class SelectField extends Field {
 					break;
 				}
 			}
+			
 			
 			if (is_null($ret)){
 				$ret = isset($this->data["items"][0][$this->get_campo_indice()]) ? $this->data["items"][0][$this->get_campo_indice()] : "";
