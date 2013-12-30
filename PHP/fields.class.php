@@ -986,7 +986,7 @@ class SelectField extends Field {
 			
 			$ret2 .= " enum /> ";
 			
-			$ret2 .=  "<select id=\"desc_".$this->get_id()."\" enum_desc class=\"enum_desc\" ";
+			$ret2 .=  "<select id=\"desc_".$this->get_id()."\" enum_desc class=\"enum_desc ".$clase_css."\" ";
 			
 			if ($this->get_activado() !== TRUE){
 				$ret2 .= " disabled ";
