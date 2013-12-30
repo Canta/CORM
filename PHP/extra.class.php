@@ -168,6 +168,14 @@ class Lista {
 		$this->datos["caller"] = (isset($data["caller"])) ? $data["caller"] : "";
 	}
 	
+    public function set_id($id){
+        $this->datos["tabla_id"] = strtoupper($id);
+    }
+    
+    public function get_id(){
+        return isset($this->datos["tabla_id"]) ? $this->datos["tabla_id"] : null;
+    }
+    
 	public function set_campos($arr){
 		if (!is_array($arr)){
 			throw new Exception("Clase Lista, método set_campos: se esperaba un array; se utilizó \"".gettype($arr)."\".<br/>\n");
@@ -198,8 +206,9 @@ class Lista {
 	}
 	
 	public function render(){
-		
-		$ret = "<table class=\"Lista";
+        $id = $this->get_id();
+        
+		$ret = "<table " . (isset($id) ? "id =\"$id\" " : "") . "class=\"Lista";
 		foreach($this->datos["opciones"] as $opcion){
 			$ret .= " ".$opcion;
 		}
