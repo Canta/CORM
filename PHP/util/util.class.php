@@ -31,7 +31,7 @@ class util {
 				//die();
 		}
 		echo('<meta http-equiv="refresh" content="0; url=' . urldecode($location) . '"/>'); 
-		die("<script>document.location.href='" . urldecode($location) . "';</script>");
+		die('<script>document.location.href=' . urldecode($location) . ';</script>');
 		return;
 	}
 	
@@ -58,6 +58,27 @@ class util {
 		}
 		return $pageURL;
 	}
+ 
+    public static function get_simple_array( $array, $assoc = false ) {
+        $ret = array();
+
+        foreach( $array as $key => $value ) {
+            if( is_array( $value ) ) {
+                $ret = array_merge( $ret, self::get_simple_array( $value, $assoc) );
+            } else {               
+                if($assoc){
+                    if(!is_numeric($key))
+                        $ret[$key] = $value;
+                } else {
+                    if(is_numeric($key))
+                        $ret[$key] = $value;
+                }
+            }
+        }
+    
+        return $ret;
+    }
+    
 }
 
 ?>
